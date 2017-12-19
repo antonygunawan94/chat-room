@@ -1,18 +1,13 @@
 package main
 
 import (
+	"github.com/gin-gonic/contrib/static"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
-	router.GET("/", chatIndex)
+	router.Use(static.Serve("/", static.LocalFile("./dist", true)))
 	router.Run()
-}
-
-func chatIndex(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"message": "pong",
-	})
 }
