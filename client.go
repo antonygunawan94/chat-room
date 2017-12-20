@@ -23,7 +23,6 @@ const (
 
 	// Maximum message size allowed from peer.
 	maxMessageSize = 512
-	kafkaTopic     = "mytopic"
 )
 
 var (
@@ -41,7 +40,7 @@ var upgrader = websocket.Upgrader{
 
 // Client is a middleman between the websocket connection and the hub.
 type Client struct {
-	hub *Hub
+	channelName string
 
 	// The websocket connection.
 	conn *websocket.Conn
@@ -71,7 +70,6 @@ func (c *Client) readPump() {
 	}()
 
 	defer func() {
-		c.hub.unregister <- c
 		c.conn.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
@@ -86,10 +84,9 @@ func (c *Client) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		// c.hub.broadcast <- message
 
 		msg := &sarama.ProducerMessage{
-			Topic: kafkaTopic,
+			Topic: c.channelName,
 			Value: sarama.StringEncoder(message),
 		}
 		_, _, errProducer := producer.SendMessage(msg)
@@ -123,7 +120,7 @@ func (c *Client) writePump() {
 		}
 	}()
 
-	partitionConsumer, err := consumer.ConsumePartition(kafkaTopic, 0, sarama.OffsetNewest)
+	partitionConsumer, err := consumer.ConsumePartition(c.channelName, 0, sarama.OffsetNewest)
 	if err != nil {
 		panic(err)
 	}
@@ -179,50 +176,18 @@ func (c *Client) writePump() {
 		}
 	}
 
-	// for {
-	// 	select {
-	// 	case message, ok := <-c.send:
-	// 		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-	// 		if !ok {
-	// 			// The hub closed the channel.
-	// 			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-	// 			return
-	// 		}
-
-	// 		w, err := c.conn.NextWriter(websocket.TextMessage)
-	// 		if err != nil {
-	// 			return
-	// 		}
-	// 		w.Write(message)
-
-	// 		// Add queued chat messages to the current websocket message.
-	// 		n := len(c.send)
-	// 		for i := 0; i < n; i++ {
-	// 			w.Write(newline)
-	// 			w.Write(<-c.send)
-	// 		}
-
-	// 		if err := w.Close(); err != nil {
-	// 			return
-	// 		}
-	// 	case <-ticker.C:
-	// 		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-	// 		if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-	// 			return
-	// 		}
-	// 	}
-	// }
 }
 
 // serveWs handles websocket requests from the peer.
-func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+func ServeWs(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256)}
-	client.hub.register <- client
+	channelName := r.URL.Query().Get("channel")
+
+	client := &Client{channelName: channelName, conn: conn, send: make(chan []byte, 256)}
 
 	// Allow collection of memory referenced by the caller by doing all work in
 	// new goroutines.

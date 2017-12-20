@@ -13,7 +13,7 @@ func main() {
 	hub := NewHub()
 	go hub.run()
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		ServeWs(hub, w, r)
+		ServeWs(w, r)
 	})
 	err := http.ListenAndServe(*addr, nil)
 	if err != nil {
