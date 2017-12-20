@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/Shopify/sarama"
 	"github.com/gorilla/websocket"
 )
 
@@ -21,6 +23,7 @@ const (
 
 	// Maximum message size allowed from peer.
 	maxMessageSize = 512
+	kafkaTopic     = "mytopic"
 )
 
 var (
@@ -53,6 +56,20 @@ type Client struct {
 // ensures that there is at most one reader on a connection by executing all
 // reads from this goroutine.
 func (c *Client) readPump() {
+	config := sarama.NewConfig()
+	config.Producer.RequiredAcks = sarama.WaitForAll
+	config.Producer.Retry.Max = 5
+	config.Producer.Return.Successes = true
+	producer, err := sarama.NewSyncProducer([]string{"localhost:9092"}, config)
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := producer.Close(); err != nil {
+			panic(err)
+		}
+	}()
+
 	defer func() {
 		c.hub.unregister <- c
 		c.conn.Close()
@@ -69,7 +86,17 @@ func (c *Client) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		c.hub.broadcast <- message
+		// c.hub.broadcast <- message
+
+		msg := &sarama.ProducerMessage{
+			Topic: kafkaTopic,
+			Value: sarama.StringEncoder(message),
+		}
+		_, _, errProducer := producer.SendMessage(msg)
+		if errProducer != nil {
+			panic(errProducer)
+		}
+
 	}
 }
 
@@ -84,8 +111,42 @@ func (c *Client) writePump() {
 		ticker.Stop()
 		c.conn.Close()
 	}()
+
+	consumer, err := sarama.NewConsumer([]string{"localhost:9092"}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	defer func() {
+		if err := consumer.Close(); err != nil {
+			log.Fatalln(err)
+		}
+	}()
+
+	partitionConsumer, err := consumer.ConsumePartition(kafkaTopic, 0, sarama.OffsetNewest)
+	if err != nil {
+		panic(err)
+	}
+
+	defer func() {
+		if err := partitionConsumer.Close(); err != nil {
+			log.Fatalln(err)
+		}
+	}()
+
+	// Trap SIGINT to trigger a shutdown.
+	// signals := make(chan os.Signal, 1)
+	// signal.Notify(signals, os.Interrupt)
+
 	for {
 		select {
+		case err := <-partitionConsumer.Errors():
+			fmt.Println(err)
+		case msg := <-partitionConsumer.Messages():
+			// fmt.Println("Received messages", string(msg.Key), string(msg.Value))
+			c.send <- msg.Value
+		// case <-signals:
+		// 	fmt.Println("Interrupt is detected")
 		case message, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
@@ -117,6 +178,40 @@ func (c *Client) writePump() {
 			}
 		}
 	}
+
+	// for {
+	// 	select {
+	// 	case message, ok := <-c.send:
+	// 		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	// 		if !ok {
+	// 			// The hub closed the channel.
+	// 			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+	// 			return
+	// 		}
+
+	// 		w, err := c.conn.NextWriter(websocket.TextMessage)
+	// 		if err != nil {
+	// 			return
+	// 		}
+	// 		w.Write(message)
+
+	// 		// Add queued chat messages to the current websocket message.
+	// 		n := len(c.send)
+	// 		for i := 0; i < n; i++ {
+	// 			w.Write(newline)
+	// 			w.Write(<-c.send)
+	// 		}
+
+	// 		if err := w.Close(); err != nil {
+	// 			return
+	// 		}
+	// 	case <-ticker.C:
+	// 		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	// 		if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+	// 			return
+	// 		}
+	// 	}
+	// }
 }
 
 // serveWs handles websocket requests from the peer.
