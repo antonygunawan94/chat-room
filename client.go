@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/Shopify/sarama"
+	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
 )
 
@@ -47,6 +49,9 @@ type Client struct {
 
 	// Buffered channel of outbound messages.
 	send chan []byte
+
+	//Cassandra Cluster
+	cluster *gocql.ClusterConfig
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -59,7 +64,7 @@ func (c *Client) readPump() {
 	config.Producer.RequiredAcks = sarama.WaitForAll
 	config.Producer.Retry.Max = 5
 	config.Producer.Return.Successes = true
-	producer, err := sarama.NewSyncProducer([]string{"localhost:9092"}, config)
+	producer, err := sarama.NewSyncProducer([]string{"172.17.0.1:9092"}, config)
 	if err != nil {
 		panic(err)
 	}
@@ -94,6 +99,34 @@ func (c *Client) readPump() {
 			panic(errProducer)
 		}
 
+		session, err := c.cluster.CreateSession()
+		defer session.Close()
+		if err != nil {
+			panic(err)
+			return
+		}
+
+		chatMessage := struct {
+			Username string `json:"username"`
+			Message  string `json:"message"`
+		}{}
+
+		err = json.Unmarshal(message, &chatMessage)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		err = session.Query(
+			"insert into chats(channel, username, message, created_at) VALUES (?, ?, ?, dateof(now()))",
+			c.channelName,
+			chatMessage.Username,
+			chatMessage.Message,
+		).Exec()
+		if err != nil {
+			log.Println(err)
+			return
+		}
 	}
 }
 
@@ -109,7 +142,7 @@ func (c *Client) writePump() {
 		c.conn.Close()
 	}()
 
-	consumer, err := sarama.NewConsumer([]string{"localhost:9092"}, nil)
+	consumer, err := sarama.NewConsumer([]string{"172.17.0.1:9092"}, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -187,10 +220,32 @@ func ServeWs(w http.ResponseWriter, r *http.Request) {
 	}
 	channelName := r.URL.Query().Get("channel")
 
-	client := &Client{channelName: channelName, conn: conn, send: make(chan []byte, 256)}
+	cluster := gocql.NewCluster("172.17.0.3")
+	cluster.Keyspace = "chat"
+
+	client := &Client{
+		channelName: channelName,
+		conn:        conn,
+		send:        make(chan []byte, 256),
+		cluster:     cluster,
+	}
 
 	// Allow collection of memory referenced by the caller by doing all work in
 	// new goroutines.
 	go client.writePump()
 	go client.readPump()
 }
+
+/*
+
+CREATE TABLE chat.chats (
+    channel text,
+    created_at timestamp,
+    message text,
+    username text,
+    PRIMARY KEY (channel, created_at)
+)
+
+insert into chats(channel, username, message, created_at) VALUES ('asd', 'antony', 'hehe', dateof(now()));
+
+*/
