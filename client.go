@@ -64,7 +64,7 @@ func (c *Client) readPump() {
 	config.Producer.RequiredAcks = sarama.WaitForAll
 	config.Producer.Retry.Max = 5
 	config.Producer.Return.Successes = true
-	producer, err := sarama.NewSyncProducer([]string{"172.17.0.1:9092"}, config)
+	producer, err := sarama.NewSyncProducer([]string{"127.0.0.1:29092"}, config)
 	if err != nil {
 		panic(err)
 	}
@@ -142,7 +142,7 @@ func (c *Client) writePump() {
 		c.conn.Close()
 	}()
 
-	consumer, err := sarama.NewConsumer([]string{"172.17.0.1:9092"}, nil)
+	consumer, err := sarama.NewConsumer([]string{"127.0.0.1:29092"}, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -189,9 +189,23 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
-			bsResponse := []byte(parser.ParseEmoticon(string(message)))
-			w.Write(bsResponse)
 
+			chatMessage := struct {
+				Username string `json:"username"`
+				Message  string `json:"message"`
+			}{}
+
+			err = json.Unmarshal(message, &chatMessage)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			chatMessage.Message = parser.ParseEmoticon(chatMessage.Message)
+
+			bsResponse, err := json.Marshal(chatMessage)
+			log.Println(string(bsResponse))
+			w.Write(bsResponse)
 			// Add queued chat messages to the current websocket message.
 			n := len(c.send)
 			for i := 0; i < n; i++ {
@@ -221,7 +235,7 @@ func ServeWs(w http.ResponseWriter, r *http.Request) {
 	}
 	channelName := r.URL.Query().Get("channel")
 
-	cluster := gocql.NewCluster("172.17.0.3")
+	cluster := gocql.NewCluster("172.17.0.2")
 	cluster.Keyspace = "chat"
 
 	client := &Client{

@@ -23,12 +23,14 @@ func (mp *messageParser) ParseEmoticon(message string) (messageParsed string) {
 	for _, em := range ems {
 		for _, emoticonMapper := range mp.emoticonMappers {
 			if strings.Replace(em, ":", "", -1) == emoticonMapper.Emoticon {
-				imageURL := `<img src="/` + emoticonMapper.Path + `" alt="` + emoticonMapper.Emoticon + `"/>`
+				imageURL := `<img src="http://172.31.5.228:8080/` + emoticonMapper.Path + `"width=20 height=20 alt="emoticon_` + emoticonMapper.Emoticon + `"/>`
 				messageParsed = strings.Replace(messageParsed, em, imageURL, -1)
+				break
 			}
 		}
 	}
 	t2 := time.Now()
+	fmt.Println(messageParsed)
 	fmt.Println(t2.Sub(t1))
 	return
 }
