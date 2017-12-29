@@ -11,7 +11,7 @@ import (
 
 type messageParser struct {
 	emoticonRegex   *regexp.Regexp
-	emoticonMappers []EmoticonMapper
+	emoticonMappers map[string]string
 }
 
 func (mp *messageParser) ParseEmoticon(message string) (messageParsed string) {
@@ -21,16 +21,12 @@ func (mp *messageParser) ParseEmoticon(message string) (messageParsed string) {
 	messageParsed = message
 	//parse emoticon to its emoticon mapper
 	for _, em := range ems {
-		for _, emoticonMapper := range mp.emoticonMappers {
-			if strings.Replace(em, ":", "", -1) == emoticonMapper.Emoticon {
-				imageURL := `<img src="http://172.31.5.228:8080/` + emoticonMapper.Path + `"width=20 height=20 alt="emoticon_` + emoticonMapper.Emoticon + `"/>`
-				messageParsed = strings.Replace(messageParsed, em, imageURL, -1)
-				break
-			}
+		if val, ok := mp.emoticonMappers[strings.Replace(em, ":", "", -1)]; ok {
+			imageURL := `<img src="http://172.31.5.228:8080/` + val + `"width=20 height=20 alt="emoticon_` + em + `"/>`
+			messageParsed = strings.Replace(messageParsed, em, imageURL, -1)
 		}
 	}
 	t2 := time.Now()
-	fmt.Println(messageParsed)
 	fmt.Println(t2.Sub(t1))
 	return
 }
@@ -39,15 +35,12 @@ func NewMessageParser() *messageParser {
 	//read from emojis dir
 	//emoticon dir relative to caller function
 	emDir := "public/emojis/"
-	emoticonMappers := make([]EmoticonMapper, 0)
+	emoticonMappers := make(map[string]string)
 
 	err := filepath.Walk(emDir, func(path string, info os.FileInfo, err error) error {
 		//trim filename extension to be used as emoji name
 		emojiName := strings.TrimSuffix(info.Name(), filepath.Ext(info.Name()))
-		emoticonMappers = append(emoticonMappers, EmoticonMapper{
-			emojiName,
-			path,
-		})
+		emoticonMappers[emojiName] = path
 		return err
 	})
 	if err != nil {
