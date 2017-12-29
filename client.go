@@ -189,7 +189,8 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
-			w.Write(message)
+			bsResponse := []byte(parser.ParseEmoticon(string(message)))
+			w.Write(bsResponse)
 
 			// Add queued chat messages to the current websocket message.
 			n := len(c.send)
